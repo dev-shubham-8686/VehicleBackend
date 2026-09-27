@@ -1,0 +1,21 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/Services/">
+    <Project Path="src/Services/AlertingService/AlertingService.csproj" />
+    <Project Path="src/Services/CommandService/CommandService.csproj" />
+    <Project Path="src/Services/DeviceGateway/DeviceGateway.csproj" />
+    <Project Path="src/Services/FleetApi/FleetApi.csproj" />
+    <Project Path="src/Services/IdentityService/IdentityService.csproj" />
+    <Project Path="src/Services/OtaService/OtaService.csproj" />
+    <Project Path="src/Services/TelemetryProcessor/TelemetryProcessor.csproj" />
+    <Project Path="src/Services/VehicleShadow/VehicleShadow.csproj" />
+    <Project Path="src/Services/VehicleSimulator/VehicleSimulator.csproj" />
+  </Folder>
+  <Folder Name="/src/Shared/">
+    <Project Path="src/Shared/Cvp.Common/Cvp.Common.csproj" />
+    <Project Path="src/Shared/Cvp.Contracts/Cvp.Contracts.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Cvp.IntegrationTests/Cvp.IntegrationTests.csproj" />
+  </Folder>
+</Solution>
