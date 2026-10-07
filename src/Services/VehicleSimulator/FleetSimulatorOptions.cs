@@ -8,4 +8,5 @@ public sealed class FleetSimulatorOptions
     public string BrokerHost { get; set; } = "localhost";
     public int BrokerPort { get; set; } = 1883;
     public int PublishIntervalSeconds { get; set; } = 5;
+    public string IdentityServiceBaseUrl { get; set; } = "http://localhost:8087";
 }

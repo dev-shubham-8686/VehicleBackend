@@ -93,10 +93,20 @@ public sealed class DeviceGatewayMqttBridgeTests : IClassFixture<KafkaFixture>, 
             .WithPayload(JsonSerializer.Serialize(telemetry))
             .Build());
 
+        // Generous budget: under a full test-suite run, several other test classes
+        // are churning their own Testcontainers through the same Docker daemon, which
+        // occasionally slows this one's broker/container startup (see docs/ARCHITECTURE.md#testing).
         ConsumeResult<string, string>? result = null;
-        for (var attempt = 0; attempt < 40 && result is null; attempt++)
+        for (var attempt = 0; attempt < 60 && result is null; attempt++)
         {
-            result = consumer.Consume(TimeSpan.FromMilliseconds(500));
+            try
+            {
+                result = consumer.Consume(TimeSpan.FromMilliseconds(500));
+            }
+            catch (ConsumeException)
+            {
+                // Topic not auto-created yet (race on a fresh broker); keep polling.
+            }
         }
 
         Assert.NotNull(result);

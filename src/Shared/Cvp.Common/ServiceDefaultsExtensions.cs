@@ -1,5 +1,7 @@
+using Cvp.Common.Observability;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Npgsql;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -27,6 +29,11 @@ public static class ServiceDefaultsExtensions
             .WithTracing(tracing =>
             {
                 tracing.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation();
+                // Confluent.Kafka and MQTTnet have no official OTel instrumentation,
+                // so Kafka produce/consume is traced manually (see CvpTelemetry);
+                // Npgsql ships its own ActivitySource, just needs registering.
+                tracing.AddSource(CvpTelemetry.SourceName);
+                tracing.AddNpgsql();
                 if (!string.IsNullOrWhiteSpace(otlpEndpoint))
                 {
                     tracing.AddOtlpExporter(o => o.Endpoint = new Uri(otlpEndpoint));
@@ -35,6 +42,8 @@ public static class ServiceDefaultsExtensions
             .WithMetrics(metrics =>
             {
                 metrics.AddAspNetCoreInstrumentation().AddHttpClientInstrumentation().AddRuntimeInstrumentation();
+                metrics.AddMeter(CvpTelemetry.SourceName);
+                metrics.AddNpgsqlInstrumentation();
                 if (!string.IsNullOrWhiteSpace(otlpEndpoint))
                 {
                     metrics.AddOtlpExporter(o => o.Endpoint = new Uri(otlpEndpoint));

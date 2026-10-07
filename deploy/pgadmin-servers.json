@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "CVP Postgres",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "cvp",
+      "Username": "cvp",
+      "SSLMode": "prefer"
+    }
+  }
+}

@@ -1,5 +1,8 @@
+using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using Confluent.Kafka;
+using Cvp.Common.Observability;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -45,7 +48,23 @@ public abstract class KafkaConsumerBackgroundService<TMessage> : BackgroundServi
                 var message = JsonSerializer.Deserialize<TMessage>(result.Message.Value);
                 if (message is not null)
                 {
+                    var traceParent = result.Message.Headers is { } headers
+                        && headers.TryGetLastBytes(CvpTelemetry.TraceParentPropertyName, out var traceParentBytes)
+                        ? Encoding.UTF8.GetString(traceParentBytes)
+                        : null;
+
+                    using var activity = CvpTelemetry.StartActivity($"{_topic} consume", ActivityKind.Consumer, traceParent);
+                    activity?.SetTag("messaging.system", "kafka");
+                    activity?.SetTag("messaging.destination.name", _topic);
+                    activity?.SetTag("messaging.kafka.message.key", result.Message.Key);
+
+                    var stopwatch = Stopwatch.StartNew();
                     await HandleAsync(result.Message.Key, message, stoppingToken);
+                    stopwatch.Stop();
+
+                    var topicTag = new KeyValuePair<string, object?>("topic", _topic);
+                    CvpTelemetry.MessagesConsumed.Add(1, topicTag);
+                    CvpTelemetry.ConsumeDuration.Record(stopwatch.Elapsed.TotalMilliseconds, topicTag);
                 }
             }
             catch (OperationCanceledException)

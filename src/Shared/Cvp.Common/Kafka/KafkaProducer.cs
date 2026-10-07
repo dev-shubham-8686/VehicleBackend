@@ -1,5 +1,8 @@
+using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using Confluent.Kafka;
+using Cvp.Common.Observability;
 using Microsoft.Extensions.Options;
 
 namespace Cvp.Common.Kafka;
@@ -22,8 +25,27 @@ public sealed class KafkaProducer : IAsyncDisposable
 
     public async Task PublishAsync<T>(string topic, string key, T message, CancellationToken cancellationToken = default)
     {
+        using var activity = CvpTelemetry.ActivitySource.StartActivity($"{topic} publish", ActivityKind.Producer);
+        activity?.SetTag("messaging.system", "kafka");
+        activity?.SetTag("messaging.destination.name", topic);
+        activity?.SetTag("messaging.kafka.message.key", key);
+
         var payload = JsonSerializer.Serialize(message);
-        await _producer.ProduceAsync(topic, new Message<string, string> { Key = key, Value = payload }, cancellationToken);
+        var kafkaMessage = new Message<string, string> { Key = key, Value = payload };
+
+        // Carries the trace across the process boundary: the consumer reads this
+        // back out and continues the same trace instead of starting a new one
+        // (see KafkaConsumerBackgroundService and docs/ARCHITECTURE.md).
+        if (activity?.Id is { } traceParent)
+        {
+            var headers = new Headers();
+            headers.Add(CvpTelemetry.TraceParentPropertyName, Encoding.UTF8.GetBytes(traceParent));
+            kafkaMessage.Headers = headers;
+        }
+
+        await _producer.ProduceAsync(topic, kafkaMessage, cancellationToken);
+
+        CvpTelemetry.MessagesProduced.Add(1, new KeyValuePair<string, object?>("topic", topic));
     }
 
     public ValueTask DisposeAsync()

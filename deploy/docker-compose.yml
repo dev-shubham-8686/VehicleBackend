@@ -20,6 +20,21 @@ services:
     volumes:
       - cvp-kafka-data:/var/lib/kafka/data
 
+  akhq:
+    image: tchiotludo/akhq:0.28.0
+    container_name: akhq
+    environment:
+      AKHQ_CONFIGURATION: |
+        akhq:
+          connections:
+            cvp:
+              properties:
+                bootstrap.servers: "kafka:19092"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - kafka
+
   postgres:
     image: timescale/timescaledb:latest-pg16
     container_name: cvp-postgres
@@ -33,6 +48,21 @@ services:
       - cvp-postgres-data:/var/lib/postgresql/data
       - ./postgres-init:/docker-entrypoint-initdb.d
 
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: cvp-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@cvp.example.com
+      PGADMIN_DEFAULT_PASSWORD: cvp_dev_only
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "5050:80"
+    volumes:
+      - ./pgadmin-servers.json:/pgadmin4/servers.json
+      - cvp-pgadmin-data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+
   redis:
     image: redis:7-alpine
     container_name: cvp-redis
@@ -40,6 +70,69 @@ services:
       - "6379:6379"
     volumes:
       - cvp-redis-data:/data
+
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: cvp-redisinsight
+    environment:
+      RI_ACCEPT_TERMS_AND_CONDITIONS: "true"
+      RI_REDIS_HOST: redis
+      RI_REDIS_PORT: "6379"
+      RI_REDIS_ALIAS: "CVP Redis"
+    ports:
+      - "5540:5540"
+    volumes:
+      - cvp-redisinsight-data:/data
+    depends_on:
+      - redis
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.65.0
+    container_name: cvp-jaeger
+    ports:
+      - "16686:16686" # UI
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    container_name: cvp-otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./observability/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "4317:4317" # OTLP gRPC (services send here)
+      - "4318:4318" # OTLP HTTP
+      - "8889:8889" # Prometheus-scrapeable metrics
+    depends_on:
+      - jaeger
+
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    container_name: cvp-prometheus
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml
+      - cvp-prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - otel-collector
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: cvp-grafana
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./observability/grafana-provisioning:/etc/grafana/provisioning
+      - cvp-grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - jaeger
 
   vernemq:
     image: vernemq/vernemq:latest
@@ -49,12 +142,33 @@ services:
       - "8888:8888" # status/health API
     environment:
       DOCKER_VERNEMQ_ACCEPT_EULA: "yes"
-      # Dev-only: no auth plugin configured yet. Phase 5 replaces this with a
-      # VerneMQ auth plugin (e.g. vmq_diversity) backed by IdentityService.
-      DOCKER_VERNEMQ_ALLOW_ANONYMOUS: "on"
+      DOCKER_VERNEMQ_ALLOW_ANONYMOUS: "off"
       DOCKER_VERNEMQ_LOG__CONSOLE__LEVEL: warning
+      # vmq_webhooks calls out to IdentityService on every connect/publish/subscribe
+      # so authn+authz policy lives in C#, not Lua/SQL inside the broker (see
+      # docs/ARCHITECTURE.md). Plaintext MQTT still means credentials travel
+      # unencrypted on this network — TLS is a Phase 7 hardening item, not done here.
+      DOCKER_VERNEMQ_PLUGINS__VMQ_WEBHOOKS: "on"
+      # Registered for both the MQTT 3.1.1 hook names and their MQTT5 "_m5"
+      # counterparts — MQTTnet 5.x clients negotiate MQTT5 by default, so
+      # VerneMQ invokes the _m5 variants for them; the request/response JSON
+      # shapes are compatible enough that the same endpoints handle both.
+      DOCKER_VERNEMQ_VMQ_WEBHOOKS__AUTH_ON_REGISTER__HOOK: auth_on_register
+      DOCKER_VERNEMQ_VMQ_WEBHOOKS__AUTH_ON_REGISTER__ENDPOINT: http://identity-service:8080/webhooks/vernemq/auth-on-register
+      DOCKER_VERNEMQ_VMQ_WEBHOOKS__AUTH_ON_REGISTER_M5__HOOK: auth_on_register_m5
+      DOCKER_VERNEMQ_VMQ_WEBHOOKS__AUTH_ON_REGISTER_M5__ENDPOINT: http://identity-service:8080/webhooks/vernemq/auth-on-register
+      DOCKER_VERNEMQ_VMQ_WEBHOOKS__AUTH_ON_PUBLISH__HOOK: auth_on_publish
+      DOCKER_VERNEMQ_VMQ_WEBHOOKS__AUTH_ON_PUBLISH__ENDPOINT: http://identity-service:8080/webhooks/vernemq/auth-on-publish
+      DOCKER_VERNEMQ_VMQ_WEBHOOKS__AUTH_ON_PUBLISH_M5__HOOK: auth_on_publish_m5
+      DOCKER_VERNEMQ_VMQ_WEBHOOKS__AUTH_ON_PUBLISH_M5__ENDPOINT: http://identity-service:8080/webhooks/vernemq/auth-on-publish
+      DOCKER_VERNEMQ_VMQ_WEBHOOKS__AUTH_ON_SUBSCRIBE__HOOK: auth_on_subscribe
+      DOCKER_VERNEMQ_VMQ_WEBHOOKS__AUTH_ON_SUBSCRIBE__ENDPOINT: http://identity-service:8080/webhooks/vernemq/auth-on-subscribe
+      DOCKER_VERNEMQ_VMQ_WEBHOOKS__AUTH_ON_SUBSCRIBE_M5__HOOK: auth_on_subscribe_m5
+      DOCKER_VERNEMQ_VMQ_WEBHOOKS__AUTH_ON_SUBSCRIBE_M5__ENDPOINT: http://identity-service:8080/webhooks/vernemq/auth-on-subscribe
     volumes:
       - cvp-vernemq-data:/vernemq/data
+    depends_on:
+      - identity-service
 
   device-gateway:
     build:
@@ -67,9 +181,13 @@ services:
       Kafka__BootstrapServers: kafka:19092
       Mqtt__BrokerHost: vernemq
       Mqtt__BrokerPort: 1883
+      Mqtt__Username: device-gateway
+      Mqtt__SharedSecret: dev-gateway-shared-secret-change-me
+      Otel__Endpoint: http://otel-collector:4317
     depends_on:
       - kafka
       - vernemq
+      - otel-collector
 
   vehicle-shadow:
     build:
@@ -81,9 +199,11 @@ services:
     environment:
       Kafka__BootstrapServers: kafka:19092
       ConnectionStrings__Redis: redis:6379
+      Otel__Endpoint: http://otel-collector:4317
     depends_on:
       - kafka
       - redis
+      - otel-collector
 
   command-service:
     build:
@@ -95,9 +215,11 @@ services:
     environment:
       Kafka__BootstrapServers: kafka:19092
       ConnectionStrings__Postgres: Host=postgres;Database=cvp;Username=cvp;Password=cvp_dev_only
+      Otel__Endpoint: http://otel-collector:4317
     depends_on:
       - kafka
       - postgres
+      - otel-collector
 
   alerting-service:
     build:
@@ -108,8 +230,10 @@ services:
       - "8084:8080"
     environment:
       Kafka__BootstrapServers: kafka:19092
+      Otel__Endpoint: http://otel-collector:4317
     depends_on:
       - kafka
+      - otel-collector
 
   ota-service:
     build:
@@ -121,9 +245,11 @@ services:
     environment:
       Kafka__BootstrapServers: kafka:19092
       ConnectionStrings__Postgres: Host=postgres;Database=cvp;Username=cvp;Password=cvp_dev_only
+      Otel__Endpoint: http://otel-collector:4317
     depends_on:
       - kafka
       - postgres
+      - otel-collector
 
   fleet-api:
     build:
@@ -132,10 +258,13 @@ services:
     container_name: cvp-fleet-api
     ports:
       - "8086:8080"
+    environment:
+      Otel__Endpoint: http://otel-collector:4317
     depends_on:
       - vehicle-shadow
       - command-service
       - alerting-service
+      - otel-collector
 
   identity-service:
     build:
@@ -146,8 +275,12 @@ services:
       - "8087:8080"
     environment:
       ConnectionStrings__Postgres: Host=postgres;Database=cvp;Username=cvp;Password=cvp_dev_only
+      Gateway__Username: device-gateway
+      Gateway__SharedSecret: dev-gateway-shared-secret-change-me
+      Otel__Endpoint: http://otel-collector:4317
     depends_on:
       - postgres
+      - otel-collector
 
   telemetry-processor:
     build:
@@ -157,9 +290,11 @@ services:
     environment:
       Kafka__BootstrapServers: kafka:19092
       ConnectionStrings__Postgres: Host=postgres;Database=cvp;Username=cvp;Password=cvp_dev_only
+      Otel__Endpoint: http://otel-collector:4317
     depends_on:
       - kafka
       - postgres
+      - otel-collector
 
   vehicle-simulator:
     build:
@@ -169,11 +304,20 @@ services:
     environment:
       Simulator__BrokerHost: vernemq
       Simulator__BrokerPort: 1883
+      Simulator__PublishIntervalSeconds: "30"
+      Simulator__IdentityServiceBaseUrl: http://identity-service:8080
+      Otel__Endpoint: http://otel-collector:4317
     depends_on:
       - vernemq
+      - identity-service
+      - otel-collector
 
 volumes:
   cvp-kafka-data:
   cvp-postgres-data:
+  cvp-pgadmin-data:
   cvp-redis-data:
+  cvp-redisinsight-data:
   cvp-vernemq-data:
+  cvp-prometheus-data:
+  cvp-grafana-data:

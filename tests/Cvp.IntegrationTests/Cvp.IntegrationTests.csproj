@@ -24,6 +24,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- These are heavyweight Testcontainers-backed tests, each class spinning up its
+         own Kafka/Postgres/Redis/VerneMQ containers — too much concurrent load on the
+         Docker daemon to parallelize safely, so collections run serially (see
+         docs/ARCHITECTURE.md#testing). -->
+    <None Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Shared\Cvp.Contracts\Cvp.Contracts.csproj" />
     <ProjectReference Include="..\..\src\Shared\Cvp.Common\Cvp.Common.csproj" />
     <!-- Each service is a top-level-statement Program, all named `Program` in the
@@ -32,6 +40,7 @@
     <ProjectReference Include="..\..\src\Services\TelemetryProcessor\TelemetryProcessor.csproj" Aliases="TelemetryProcessorAssembly" />
     <ProjectReference Include="..\..\src\Services\CommandService\CommandService.csproj" Aliases="CommandServiceAssembly" />
     <ProjectReference Include="..\..\src\Services\VehicleShadow\VehicleShadow.csproj" Aliases="VehicleShadowAssembly" />
+    <ProjectReference Include="..\..\src\Services\IdentityService\IdentityService.csproj" Aliases="IdentityServiceAssembly" />
   </ItemGroup>
 
 </Project>
